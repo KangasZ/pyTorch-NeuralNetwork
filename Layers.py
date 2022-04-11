@@ -9,6 +9,7 @@ class Layer:
         self.tail = tail
         self.head = None
         self.output = 0
+        self.gradient = 0
 
     def forward(self):
         if self.head is not None:
@@ -17,6 +18,9 @@ class Layer:
     def step(self, lr):
         if self.head is not None:
             self.head.step(lr)
+            print(self.head.gradient)
+        else:
+            self.gradient = self.output
 
 
 class Input(Layer):
@@ -29,8 +33,8 @@ class Input(Layer):
     def forward(self):
         super().forward()
 
-    #def step(self, lr):
-    #    super().step(lr)
+    def step(self, lr):
+        super().step(lr)
 
 
 class Param(Layer):
@@ -40,10 +44,14 @@ class Param(Layer):
 
     def forward(self):
         """This layer's values do not change during forward propagation."""
-        pass
+        return
 
     def step(self, lr):
         print("Hey how about you stop using this and compute your own derivative, huh?")
+        print(self.output)
+        print(self.gradient)
+        self.output -= self.gradient*lr
+
 
 
 class Linear(Layer):
@@ -65,7 +73,12 @@ class Linear(Layer):
 
     def step(self, lr):
         super().step(lr)
+        print(self.head.gradient)
+        # Todo: Fix this gradient
+        self.gradient = self.head.gradient
+        self.W.gradient = torch.matmul(self.head.gradient, torch.t(self.tail.output))
         self.W.step(lr)
+        self.b.gradient = self.output
         self.b.step(lr)
 
 
@@ -78,10 +91,16 @@ class RelU(Layer):
         self.output = self.tail.output * (self.tail.output > 0)
         super().forward()
 
+    def step(self, lr):
+        super().step(lr)
+        # Todo: Make work with SGD
+        # My thought is mean along row then round to 0 or 1
+        self.gradient = self.head.gradient * (self.output > 0)
+
+
 class SoftMax(Layer):
     def __init__(self, prev):
         """
-        TODO: Accept any arguments specific to this child class.
         """
         super().__init__(prev)  # IDEK what to pass in here, not really needed.
         self.out_s = self.tail.out_s
@@ -90,6 +109,11 @@ class SoftMax(Layer):
     def forward(self):
         self.output = torch.exp(self.tail.output) / torch.exp(self.tail.output).sum()
         super().forward()
+
+    def step(self, lr):
+        super().step(lr)
+        # todo: fix
+        self.gradient = self.head.gradient*1
 
 class Sum(Layer):
     def __init__(self, *prevs):
@@ -109,7 +133,9 @@ class Sum(Layer):
         self.output = temp
 
     def step(self, lr):
-        pass
+        # Todo: If sum is used anywhere beside the end it breaks. Dont have that happen.
+        #super().step(lr)
+        self.gradient = self.output
 
 
 class Regularization(Layer):
@@ -122,8 +148,9 @@ class Regularization(Layer):
         self.output = self.loss.output + (self.regularization_factor * ((self.tail.output ** 2).sum()))
 
     def step(self, lr):
-        # Should not run?
-        pass
+        super().step(lr)
+        self.gradient = self.head.gradient*1
+
 
 class L2(Layer):
     def __init__(self):
@@ -132,15 +159,19 @@ class L2(Layer):
         """
         super().__init__(None)  # IDEK what to pass in here, not really needed.
         self.actual = 0
+        self.intermediate = 0
         # Check if these are identical!
 
     def forward(self):
-        self.output = (self.actual - self.tail.output) ** 2
-        self.output = self.output.sum(axis=0).mean()
+        self.intermediate = (self.actual - self.tail.output) ** 2
+        self.output = self.intermediate.sum(axis=0).mean()
 
     def step(self, lr):
-        # Should be the end, therefor, step ends
-        return
+        super().step(lr)
+        print("Intermediate L2", self.intermediate)
+        print("Tail grad:", self.head.gradient)
+        self.gradient = self.head.gradient * self.intermediate
+        print("L2 Grad:", self.gradient)
 
 class CrossEntropy(Layer):
     def __init__(self):
@@ -156,5 +187,5 @@ class CrossEntropy(Layer):
         self.output = (self.output.sum(axis=0) * -1).mean()
 
     def step(self, lr):
-        # Should be the end, therefor, step ends
-        return
+        self.step(lr)
+        self.gradient = self.head.gradient*1

@@ -33,6 +33,8 @@ class Network:
         :return:
         """
         new_layer.tail = self._tail
+        new_layer.head = self._loss
+        self._loss.tail = new_layer
         self._tail.head = new_layer
         self._tail = new_layer
 
@@ -90,7 +92,6 @@ class Network:
     def forward(self, x, y):
         output = self.inference(x)
         self._loss.actual = y
-        self._loss.tail = self._tail
         self._loss.forward()
         self.loss = self._loss.output
         return output
@@ -110,9 +111,10 @@ class Network:
                     reg_lay.forward()
                 self._objective_function = Sum(self._regularizations, self._loss)
                 self._objective_function.forward()
-                self._objective_function.output.backward()
 
+                self._loss.head = self._objective_function
                 self._head.step(self._learning_rate)
+                # TODO: Regularization handling
                 self._backward = True
                 return True
             else:
