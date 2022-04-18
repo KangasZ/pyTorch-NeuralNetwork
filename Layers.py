@@ -15,12 +15,20 @@ class Layer:
         if self.head is not None:
             self.head.forward()
 
-    def step(self, lr):
+    def backward(self):
         if self.head is not None:
-            self.head.step(lr)
-            print(self.head.gradient)
+            self.head.backward()
         else:
             self.gradient = self.output
+
+    def accumulate_grad(self, lr):
+        if self.head is not None:
+            self.head.accumulate_grad(lr)
+
+    def zero_grad(self):
+        self.gradient = 0
+        if self.head is not None:
+            self.head.zero_grad()
 
 
 class Input(Layer):
@@ -29,12 +37,6 @@ class Input(Layer):
         self.tail = None
         self.out_s = rows
         self.output = 0
-
-    def forward(self):
-        super().forward()
-
-    def step(self, lr):
-        super().step(lr)
 
 
 class Param(Layer):
@@ -46,12 +48,12 @@ class Param(Layer):
         """This layer's values do not change during forward propagation."""
         return
 
-    def step(self, lr):
-        print("Hey how about you stop using this and compute your own derivative, huh?")
-        print(self.output)
-        print(self.gradient)
-        self.output -= self.gradient*lr
+    def step(self):
+        print("this shouldnt be called bud")
+        return
 
+    def accumulate_grad(self, lr):
+        self.output -= self.gradient*lr
 
 
 class Linear(Layer):
@@ -71,15 +73,24 @@ class Linear(Layer):
         self.output = (self.W.output @ self.tail.output) + self.b.output
         super().forward()
 
-    def step(self, lr):
-        super().step(lr)
-        print(self.head.gradient)
-        # Todo: Fix this gradient
-        self.gradient = self.head.gradient
-        self.W.gradient = torch.matmul(self.head.gradient, torch.t(self.tail.output))
-        self.W.step(lr)
-        self.b.gradient = self.output
-        self.b.step(lr)
+    def backward(self):
+        super().backward()
+        #print(self.head.gradient)
+        self.gradient = torch.matmul(torch.t(self.W.output), self.head.gradient)
+        self.W.gradient += torch.matmul(self.head.gradient, torch.t(self.tail.output))
+        #self.W.backward(lr)
+        self.b.gradient = self.head.gradient
+        #self.b.backward(lr)
+
+    def accumulate_grad(self, lr):
+        super(self).accumulate_grad(lr)
+        self.W.accumulate_grad(lr)
+        self.b.accumulate_grad(lr)
+
+    def zero_grad(self):
+        super(self).zero_grad()
+        self.W.zero_grad()
+        self.b.zero_grad()
 
 
 class RelU(Layer):
@@ -91,9 +102,8 @@ class RelU(Layer):
         self.output = self.tail.output * (self.tail.output > 0)
         super().forward()
 
-    def step(self, lr):
-        super().step(lr)
-        # Todo: Make work with SGD
+    def backward(self):
+        super().backward()
         # My thought is mean along row then round to 0 or 1
         self.gradient = self.head.gradient * (self.output > 0)
 
@@ -107,50 +117,46 @@ class SoftMax(Layer):
         # Check if these are identical!
 
     def forward(self):
-        self.output = torch.exp(self.tail.output) / torch.exp(self.tail.output).sum()
+        self.output = torch.div(torch.exp(self.tail.output), torch.exp(self.tail.output).sum(axis=0))
         super().forward()
 
-    def step(self, lr):
-        super().step(lr)
-        # todo: fix
-        self.gradient = self.head.gradient*1
+    def backward(self):
+        print("NONO NO STOP IT THIS IS POTATO MAN CALLING FROM POTATO LAND THESE POTATOS ARE NOT READY FOR POTATO HARVEST")
 
 class Sum(Layer):
-    def __init__(self, *prevs):
+    def __init__(self, prev):
         super().__init__(1)
         self.prevs = []
-        for prev in prevs:
-            if type(prev) is list or type(prev) is tuple:
-                for prev2 in prev:
-                    self.prevs.append(prev2)
-            else:
-                self.prevs.append(prev)
+        self.prevs.append(prev)
+
+    def add_reg(self, prev):
+        self.prevs.append(prev)
+        #prev.sum = self
 
     def forward(self):
         temp = self.prevs[0].output.sum()
         for i in range(1, len(self.prevs)):
-            temp = temp + self.prevs[i].output.sum()
+            temp += self.prevs[i].output.sum()
         self.output = temp
+        super().forward()
 
-    def step(self, lr):
+    def backward(self):
         # Todo: If sum is used anywhere beside the end it breaks. Dont have that happen.
         #super().step(lr)
         self.gradient = self.output
 
 
 class Regularization(Layer):
-    def __init__(self, weight, loss, regularization_factor):
+    def __init__(self, weight, regularization_factor):
         super().__init__(weight)
-        self.loss = loss
         self.regularization_factor = regularization_factor
 
     def forward(self):
-        self.output = self.loss.output + (self.regularization_factor * ((self.tail.output ** 2).sum()))
+        self.output = (self.regularization_factor * ((self.tail.output ** 2).sum()))
 
-    def step(self, lr):
-        super().step(lr)
-        self.gradient = self.head.gradient*1
-
+    def backward(self):
+        self.gradient = self.regularization_factor*2*self.tail.output
+        self.tail.gradient += self.gradient
 
 class L2(Layer):
     def __init__(self):
@@ -166,12 +172,10 @@ class L2(Layer):
         self.intermediate = (self.actual - self.tail.output) ** 2
         self.output = self.intermediate.sum(axis=0).mean()
 
-    def step(self, lr):
-        super().step(lr)
-        print("Intermediate L2", self.intermediate)
-        print("Tail grad:", self.head.gradient)
-        self.gradient = self.head.gradient * self.intermediate
-        print("L2 Grad:", self.gradient)
+    def backward(self):
+        super().backward()
+        self.gradient = 2*(self.actual - self.tail.output)*-1
+        #print("L2 Grad:", self.gradient)
 
 class CrossEntropy(Layer):
     def __init__(self):
@@ -186,6 +190,5 @@ class CrossEntropy(Layer):
         self.output = (self.actual*torch.log(self.tail.output + 1E-7))
         self.output = (self.output.sum(axis=0) * -1).mean()
 
-    def step(self, lr):
-        self.step(lr)
-        self.gradient = self.head.gradient*1
+    def backward(self):
+        print("NONO NO STOP IT THIS IS POTATO MAN CALLING FROM POTATO LAND THESE POTATOS ARE NOT READY FOR POTATO HARVEST")

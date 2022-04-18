@@ -1,6 +1,9 @@
 from Layers import *
 
 class Network:
+    """
+    A representation of a neural network using pytorch
+    """
     def __init__(self, input_rows, output_rows, device, learning_rate=0.01, regularization_factor=0, loss='l2'):
         self._forward = False
         self._backward = False
@@ -16,7 +19,7 @@ class Network:
         self._regularization_factor = regularization_factor
 
         self._head = Input(self._irows)
-        self._objective_function = None
+        self.objective_function = None
         if loss == 'l2':
             self._loss = L2()
         elif loss == 'cross entropy' or loss == 'ce' or loss == 'crossentropy':
@@ -24,6 +27,7 @@ class Network:
         else:
             raise ValueError("Get a actual loss you monke")
         self.loss = 0
+        self.objective_function = Sum(self._loss)
         self._tail = self._head
 
     def _add_layer(self, new_layer):
@@ -53,7 +57,7 @@ class Network:
         rows = num_nodes
         weights = (torch.rand((rows, columns), device=self._device, dtype=torch.float64) + wo)*w
         bias = (torch.rand((rows, 1), device=self._device, dtype=torch.float64) + bo)*b
-        self.add_linear(weights, bias, True)
+        return self.add_linear(weights, bias, True)
 
     def add_linear(self, weights_tensor, bias_tensor, regularization=False):
         """
@@ -68,31 +72,36 @@ class Network:
         bias = Param(bias_tensor)
         new_layer = Linear(self._tail, weights, bias)
         # Todo: Will most likely need to rewrite the regularization layer implementation in the network
-        if regularization:
-            self._regularizations.append(Regularization(weights, self._loss, self._regularization_factor))
-
         self._add_layer(new_layer)
+        if regularization:
+            reg_lay = Regularization(weights, self._regularization_factor)
+            self._regularizations.append(reg_lay)
+            self.objective_function.add_reg(reg_lay)
+            #self._add_layer(reg_lay)
+            new_layer.reg = reg_lay
+        return new_layer
 
     def add_relu(self):
         new_layer = RelU(self._tail)
         self._add_layer(new_layer)
+        return new_layer
 
     def add_softmax(self):
         new_layer = SoftMax(self._tail)
         self._add_layer(new_layer)
+        return new_layer
 
     def inference(self, x):
-        if self._forward is False:
-            self._forward = True
-        self._backward = False
         self._head.output = x
         self._head.forward()
         return self._tail.output
 
     def forward(self, x, y):
-        output = self.inference(x)
+        if self._forward is False:
+            self._forward = True
+        self._backward = False
         self._loss.actual = y
-        self._loss.forward()
+        output = self.inference(x)
         self.loss = self._loss.output
         return output
 
@@ -102,20 +111,31 @@ class Network:
         (p >= 0).to(torch.float64)
         return (p.argmax(axis=0) == y.argmax(axis=0)).to(torch.float64).mean()
 
+    def accumulate_grad(self):
+        if self._backward:
+            self._head.accumulate_grad(self._learning_rate)
+
+    def zero_grad(self):
+        if self._backward:
+            self._head.zero_grad()
+
     def backward(self):
         if self._forward:
             if not self._backward:
                 # Setting up non-loss stuff
                 # Managing the Regularization Layers
-                for reg_lay in self._regularizations:
-                    reg_lay.forward()
-                self._objective_function = Sum(self._regularizations, self._loss)
-                self._objective_function.forward()
 
-                self._loss.head = self._objective_function
-                self._head.step(self._learning_rate)
+                for reg_lay in self._regularizations:
+                    reg_lay.head = self.objective_function
+                    reg_lay.forward()
+                self.objective_function.forward()
+                for reg_lay in self._regularizations:
+                    reg_lay.backward()
+                self._loss.head = self.objective_function
+                self._head.backward()
                 # TODO: Regularization handling
                 self._backward = True
+                self._forward = False
                 return True
             else:
                 return False

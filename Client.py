@@ -1,6 +1,7 @@
 from NeuralNetwork import Network
 import math
 
+
 class Client:
     def __init__(self, network: Network, data_x, data_y):
         self.network = network
