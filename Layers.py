@@ -10,7 +10,6 @@ class Layer:
         self.head = None
         self.output = 0
         self.gradient = 0
-
     def forward(self):
         if self.head is not None:
             self.head.forward()
@@ -21,9 +20,9 @@ class Layer:
         else:
             self.gradient = self.output
 
-    def accumulate_grad(self, lr):
+    def step(self, lr):
         if self.head is not None:
-            self.head.accumulate_grad(lr)
+            self.head.step(lr)
 
     def zero_grad(self):
         self.gradient = 0
@@ -48,12 +47,13 @@ class Param(Layer):
         """This layer's values do not change during forward propagation."""
         return
 
-    def step(self):
+    def backward(self):
         print("this shouldnt be called bud")
         return
 
-    def accumulate_grad(self, lr):
+    def step(self, lr):
         self.output -= self.gradient*lr
+        #print(self.gradient)
 
 
 class Linear(Layer):
@@ -82,13 +82,13 @@ class Linear(Layer):
         self.b.gradient = self.head.gradient
         #self.b.backward(lr)
 
-    def accumulate_grad(self, lr):
-        super(self).accumulate_grad(lr)
-        self.W.accumulate_grad(lr)
-        self.b.accumulate_grad(lr)
+    def step(self, lr):
+        super().step(lr)
+        self.W.step(lr)
+        self.b.step(lr)
 
     def zero_grad(self):
-        super(self).zero_grad()
+        super().zero_grad()
         self.W.zero_grad()
         self.b.zero_grad()
 
@@ -121,7 +121,14 @@ class SoftMax(Layer):
         super().forward()
 
     def backward(self):
-        print("NONO NO STOP IT THIS IS POTATO MAN CALLING FROM POTATO LAND THESE POTATOS ARE NOT READY FOR POTATO HARVEST")
+        # adapted from https://e2eml.school/softmax.html
+        super().backward()
+        assert type(self.head is CrossEntropy)
+        #self.gradient = (self.output * (torch.eye(self.output.shape[0]) - (self.output**2).sum()
+        #                        ))\
+        #                @ self.head.gradient
+        self.gradient = self.head.gradient
+
 
 class Sum(Layer):
     def __init__(self, prev):
@@ -191,4 +198,8 @@ class CrossEntropy(Layer):
         self.output = (self.output.sum(axis=0) * -1).mean()
 
     def backward(self):
-        print("NONO NO STOP IT THIS IS POTATO MAN CALLING FROM POTATO LAND THESE POTATOS ARE NOT READY FOR POTATO HARVEST")
+        # Calculated on my own similar to l2 layer
+        super().backward()
+        #self.gradient = ((1/self.tail.output)*self.output*torch.div(self.actual, self.output) * -1).mean(axis=1)
+        #self.gradient = self.gradient.reshape(self.gradient.shape[0], 1)
+        self.gradient = (self.tail.output - self.actual) * self.head.gradient

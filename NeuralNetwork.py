@@ -4,7 +4,7 @@ class Network:
     """
     A representation of a neural network using pytorch
     """
-    def __init__(self, input_rows, output_rows, device, learning_rate=0.01, regularization_factor=0, loss='l2'):
+    def __init__(self, input_rows, output_rows, dtype=torch.float32, learning_rate=0.01, regularization_factor=0, loss='l2'):
         self._forward = False
         self._backward = False
 
@@ -13,10 +13,10 @@ class Network:
 
         self._irows = input_rows
         self._orows = output_rows
-        self._device = device
 
         self._learning_rate = learning_rate
         self._regularization_factor = regularization_factor
+        self._dtype = dtype
 
         self._head = Input(self._irows)
         self.objective_function = None
@@ -55,8 +55,8 @@ class Network:
         """
         columns = self._tail.out_s
         rows = num_nodes
-        weights = (torch.rand((rows, columns), device=self._device, dtype=torch.float64) + wo)*w
-        bias = (torch.rand((rows, 1), device=self._device, dtype=torch.float64) + bo)*b
+        weights = (torch.rand((rows, columns), dtype=self._dtype) + wo)*w
+        bias = (torch.rand((rows, 1), dtype=self._dtype) + bo)*b
         return self.add_linear(weights, bias, True)
 
     def add_linear(self, weights_tensor, bias_tensor, regularization=False):
@@ -102,22 +102,21 @@ class Network:
         self._backward = False
         self._loss.actual = y
         output = self.inference(x)
-        self.loss = self._loss.output
+        self.loss = float(self._loss.output)
         return output
 
     def accuracy(self, x, y):
         temp = self.forward(x,y)
         p = temp - temp.max(axis=0).values
-        (p >= 0).to(torch.float64)
-        return (p.argmax(axis=0) == y.argmax(axis=0)).to(torch.float64).mean()
+        (p >= 0).to(self._dtype)
+        return float((p.argmax(axis=0) == y.argmax(axis=0)).to(self._dtype).mean())
 
-    def accumulate_grad(self):
+    def step(self):
         if self._backward:
-            self._head.accumulate_grad(self._learning_rate)
+            self._head.step(self._learning_rate)
 
     def zero_grad(self):
-        if self._backward:
-            self._head.zero_grad()
+        self._head.zero_grad()
 
     def backward(self):
         if self._forward:
